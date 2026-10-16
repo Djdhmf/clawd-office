@@ -1,0 +1,6 @@
+{
+  "name": "clawd-office",
+  "description": "A living 8-bit office of Claude crabs that acts out what Claude is really doing.",
+  "owner": { "name": "David" },
+  "plugins": [{ "name": "clawd-office", "source": "./" }]
+}

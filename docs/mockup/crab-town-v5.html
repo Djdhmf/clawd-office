@@ -1,0 +1,564 @@
+<h2>Crab Town v5: every Claude Code feature, a two-crab elevator, sessions that message each other</h2>
+<p class="subtitle">20 frames a second with eased walking and a sliding-door elevator that carries two crabs at a time. Sessions send each other letters, and messages to or from main ride the pneumatic tube. The table on the right is built from the same list the town plays, so it is exactly what you see; the log under the picture names each event as it plays.</p>
+
+<div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap">
+  <div style="background:#141413;border-radius:8px;padding:10px;border:1px solid #333">
+    <canvas id="town" width="990" height="684" style="image-rendering:pixelated;max-width:100%"></canvas>
+    <div id="log" style="font:12px ui-monospace,monospace;color:#bbb;margin-top:8px;height:4.8em;overflow:hidden"></div>
+  </div>
+  <div style="max-width:420px;font-size:12px">
+    <h3 id="count">Real events → crab actions</h3>
+    <div id="table" style="max-height:640px;overflow:auto;border:1px solid #333;border-radius:6px;padding:6px 8px"></div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const cv = document.getElementById('town'), g = cv.getContext('2d'), logEl = document.getElementById('log')
+  const S = 9, W = 110, H = 76
+  const rnd = (a, b) => a + Math.random() * (b - a), pick = a => a[Math.floor(Math.random() * a.length)]
+  const rect = (x, y, w, h, c) => { g.fillStyle = c; g.fillRect(Math.round(x) * S, Math.round(y) * S, Math.max(0, w) * S, Math.max(0, h) * S) }
+  const px = (x, y, c) => rect(x, y, 1, 1, c)
+  const log = text => { logEl.innerHTML = `<div>${text}</div>` + logEl.innerHTML.slice(0, 2000) }
+
+  // ---------- the building ----------
+  const FH = 17, TOP = 5, SHAFT = 22, WAIT_X = 27, GAP = 11, TUBE = 106
+  const floorY = i => TOP + (i + 1) * FH - 1
+  const ROOMS = [
+    { floor: 0, x0: SHAFT, x1: W, name: 'Main office', wall: '#3B302A', fl: '#2B2622' },
+    { floor: 1, x0: SHAFT, x1: 80, name: 'Agent workshop', wall: '#2C3A40', fl: '#232A2E' },
+    { floor: 1, x0: 80, x1: W, name: 'Team room', wall: '#3A2C36', fl: '#2A2028' },
+    { floor: 2, x0: SHAFT, x1: 66, name: 'Sessions', wall: '#332D40', fl: '#26232E' },
+    { floor: 2, x0: 66, x1: W, name: 'Library', wall: '#3A2E26', fl: '#2A231E' },
+    { floor: 3, x0: SHAFT, x1: 72, name: 'Break room', wall: '#3A332A', fl: '#2A2620' },
+    { floor: 3, x0: 72, x1: W, name: 'Kitchen', wall: '#2F3A2A', fl: '#242A20' },
+  ]
+  const clouds = [8, 40, 75, 100].map(x => ({ x, y: Math.floor(rnd(0, 3)) }))
+  let frameNo = 0, tick = 0
+  const fx = {}
+  const fxOn = (name, dur) => { fx[name] = tick + dur }
+  const isFx = name => (fx[name] || 0) > tick
+  const parts = [], dust = []
+
+  function drawBuilding(t) {
+    rect(0, 0, W, H, '#0E0D0C')
+    rect(0, 0, W, TOP, '#3E6E9E')
+    clouds.forEach(c => { c.x = (c.x + 0.015) % (W + 8); rect(c.x - 8, c.y, 6, 1, '#DDE8F2'); rect(c.x - 7, c.y + 1, 3, 1, '#F2F6FA') })
+    rect(90, TOP - 3, 1, 3, '#888'); rect(88, TOP - 4, 5, 1, '#BBB'); px(90, TOP - 5, isFx('dish') && t % 4 < 2 ? '#7FD1A8' : '#555')
+    for (const r of ROOMS) {
+      const y0 = TOP + r.floor * FH, fy = floorY(r.floor)
+      const dark = r.floor === 0 && isFx('lightsOff')
+      rect(r.x0, y0, r.x1 - r.x0, FH, dark ? '#16120F' : r.wall)
+      rect(r.x0, fy - 1, r.x1 - r.x0, 2, r.fl)
+      if (!['Library', 'Team room'].includes(r.name)) { const wx = r.x0 + 4; rect(wx, y0 + 4, 7, 5, '#4D7FB0'); rect(wx + ((t / 30 + r.floor * 2) % 6), y0 + 5, 2, 1, '#E8F0F6'); rect(wx + 3, y0 + 4, 1, 5, '#2A2420'); rect(wx, y0 + 6, 7, 1, '#2A2420') }
+      if (!dark) for (const lx of [Math.floor(r.x0 + (r.x1 - r.x0) * 0.35), Math.floor(r.x0 + (r.x1 - r.x0) * 0.75)]) {
+        const alarm = r.floor === 0 && isFx('alarm')
+        rect(lx, y0 + 1, 1, 1, '#555'); rect(lx - 1, y0 + 2, 3, 1, alarm ? (t % 4 < 2 ? '#FF3B30' : '#7A1A15') : '#E8D7A0')
+        g.fillStyle = alarm && t % 4 < 2 ? 'rgba(255,60,48,0.12)' : 'rgba(255,230,160,0.045)'
+        g.beginPath(); g.moveTo((lx - 1) * S, (y0 + 3) * S); g.lineTo((lx + 2) * S, (y0 + 3) * S); g.lineTo((lx + 8) * S, fy * S); g.lineTo((lx - 7) * S, fy * S); g.fill()
+      }
+      if (r.x0 > SHAFT) rect(r.x0, y0, 1, FH - 9, '#1A1816')
+    }
+    for (let i = 0; i <= 4; i++) rect(0, TOP + i * FH, W, 1, '#1A1816')
+    rect(0, TOP, SHAFT, 4 * FH, '#1E1C1A'); rect(SHAFT - 1, TOP, 1, 4 * FH, '#111')
+    for (let i = 0; i < 4; i++) { rect(1, floorY(i) - 10, SHAFT - 2, 1, '#3A3A3A'); px(SHAFT, floorY(i) - 11, lift.floor === i && lift.door > 0.5 ? '#7FD1A8' : '#7A2A2A') }
+    rect(10, TOP + 1, 1, Math.max(0, lift.y - TOP - 10), '#444')
+    const cy = lift.y - 9
+    rect(1, cy, SHAFT - 2, 10, '#6B6B70'); rect(2, cy + 1, SHAFT - 4, 8, '#2B2B2E')
+    lift.drawRiders()
+    const half = (SHAFT - 4) / 2 * (1 - lift.door)
+    rect(2, cy + 1, half, 8, '#8A8A90'); rect(2 + (SHAFT - 4) - half, cy + 1, half, 8, '#8A8A90')
+    g.font = 'bold 9px ui-monospace,monospace'; g.fillStyle = '#E8C15A'; g.fillText(`${lift.riders.length}/2`, 8 * S, (cy - 0.3) * S)
+    rect(0, floorY(3) + 1, W, H - floorY(3) - 1, '#2A2A2A'); for (let x = (t / 4) % 10; x < W; x += 10) rect(x, H - 2, 4, 1, '#555')
+    rect(W - 7, floorY(3) - 9, 6, 9, '#4B3325'); px(W - 3, floorY(3) - 5, '#E8C15A')
+    rect(TUBE, floorY(0) - 6, 2, floorY(2) - floorY(0) + 1, '#7F9AA8'); rect(TUBE - 1, floorY(0) - 6, 4, 2, '#5F7A88'); rect(TUBE - 1, floorY(2) - 6, 4, 2, '#5F7A88')
+    if (isFx('tube')) { const k = Math.min(1, (tick - fx.tubeAt) / 20); const from = floorY(fx.tubeFrom) - 5, to = floorY(fx.tubeTo) - 5; rect(TUBE, from + (to - from) * k, 2, 2, '#E8C15A') }
+  }
+
+  const ST = { chute: 26, telescope: 33, inbox: 40, board: 48, desk: 59, console: 72, phone: 81, shelf: 90, catalog: 99, tube: 103 }
+  const DESKS = [32, 50, 68]
+  const SESSION_DESKS = [30, 44, 58]
+  function furniture(t) {
+    let f = floorY(0), y0 = TOP
+    rect(24, y0 + 6, 3, f - y0 - 6, '#5A5A60'); rect(23, y0 + 6, 5, 2, '#777')
+    rect(31, f - 4, 1, 4, '#777'); rect(34, f - 4, 1, 4, '#777'); rect(31, f - 7, 6, 2, '#B08D57'); rect(36, f - 8, 2, 2, '#B08D57')
+    rect(40, f - 5, 1, 5, '#555'); rect(38, f - 6, 5, 1, '#8A6A4A'); rect(38, f - 7, 1, 1, '#8A6A4A'); rect(42, f - 7, 1, 1, '#8A6A4A')
+    if (isFx('letter')) { fx.letterY = Math.min(f - 7, (fx.letterY ?? y0) + 0.3); rect(39, fx.letterY, 3, 2, '#F5EEDC'); px(40, fx.letterY, '#D97757') }
+    rect(44, y0 + 4, 11, 7, '#EEE'); rect(44, y0 + 4, 11, 1, '#BBB')
+    for (let i = 0; i < Math.min(3, fx.todos || 0); i++) { rect(46, y0 + 6 + i * 2, 1, 1, i < (fx.ticked || 0) ? '#2E9E6A' : '#AAA'); rect(48, y0 + 6 + i * 2, 5 - (i % 2), 1, '#3E6AA8') }
+    for (let i = 0; i < (fx.stickies || 0); i++) rect(52 - i * 2, y0 + 9, 2, 1, '#E8C15A')
+    if (fx.picture) { rect(56, y0 + 4, 6, 5, '#B08D57'); rect(57, y0 + 5, 4, 3, '#4D7FB0'); px(58, y0 + 6, '#E8C15A'); rect(57, y0 + 7, 4, 1, '#2E9E6A') }
+    if (fx.pr) { rect(63, y0 + 4, 5, 4, '#2E9E6A'); rect(64, y0 + 5, 3, 1, '#F5EEDC') }
+    const ctxv = fx.context || 0.3
+    rect(70, y0 + 3, 1, 8, '#222'); rect(70, y0 + 11 - Math.round(8 * ctxv), 1, Math.round(8 * ctxv), ctxv > 0.8 ? '#D9534F' : '#7FD1A8')
+    const spin = isFx('gears') ? Math.floor(t / 2) % 2 : 0; rect(73, y0 + 4, 3, 3, '#888'); px(74 - spin, y0 + 3, '#888'); px(74 + spin, y0 + 7, '#888'); rect(76, y0 + 7, 2, 2, '#777')
+    rect(53, f - 3, 14, 1, '#6B4A35'); rect(54, f - 2, 1, 2, '#4B3325'); rect(65, f - 2, 1, 2, '#4B3325'); rect(55, f - 7, 5, 4, '#2A2A2A'); rect(56, f - 6, 3, 2, mainTool === 'Edit' ? (t % 4 < 2 ? '#7FD1A8' : '#5FB18A') : '#2F3F45'); rect(62, f - 4, 2, 1, '#F5EEDC')
+    if (ctxv > 0.8) for (let i = 0; i < 4; i++) rect(61 + (i % 2), f - 5 - i, 3, 1, '#F5EEDC')
+    if (isFx('phoneDock')) { rect(64, f - 5, 1, 2, '#333'); if (t % 4 < 2) px(64, f - 6, '#7FD1A8') }
+    rect(68, f - 9, 8, 9, '#222'); rect(69, f - 8, 6, 4, isFx('alarm') ? '#3A0B0B' : '#0B2A1A')
+    for (let i = 0; i < 3; i++) rect(69, f - 8 + i, 1 + ((i * 3 + Math.floor(t / 2)) % 5), 1, isFx('alarm') ? '#FF6B5B' : '#3DB47A')
+    if (isFx('hourglass')) { const h = Math.floor(t / 6) % 2; rect(73, f - 12, 3, 1, '#B08D57'); rect(73, f - 9, 3, 1, '#B08D57'); px(74, f - 11, '#E8C15A'); px(74, f - 10 - h, '#E8C15A') }
+    rect(78, f - 3, 7, 1, '#6B4A35'); rect(79, f - 2, 1, 2, '#4B3325'); rect(83, f - 2, 1, 2, '#4B3325'); if (!isFx('phone')) { rect(80, f - 5, 3, 2, '#D9534F'); rect(79, f - 6, 5, 1, '#B03A36') } else if (t % 4 < 2) px(81, f - 7, '#FFF')
+    shelf(87, f); rect(96, f - 7, 8, 7, '#7A5A3A'); for (let j = 0; j < 3; j++) for (let i = 0; i < 2; i++) { rect(97 + i * 4, f - 6 + j * 2, 3, 1, '#5A3E2A'); px(98 + i * 4, f - 6 + j * 2, '#E8C15A') }
+    if (fx.poster) { rect(96, y0 + 3, 7, 5, '#F5EEDC'); rect(97, y0 + 4, 5, 1, '#D97757'); rect(97, y0 + 6, 3, 1, '#3E6AA8') }
+    clock(66, y0 + 4, t)
+    f = floorY(1)
+    for (const x of DESKS) { const on = crabs.some(c => c.role === 'agent' && c.deskX === x && c.state === 'work'); rect(x - 5, f - 3, 11, 1, '#6B4A35'); rect(x - 4, f - 2, 1, 2, '#4B3325'); rect(x + 4, f - 2, 1, 2, '#4B3325'); rect(x - 3, f - 7, 5, 4, '#2A2A2A'); rect(x - 2, f - 6, 3, 2, on ? (t % 4 < 2 ? '#7FD1A8' : '#5FB18A') : '#2F3F45') }
+    rack(74, f, t)
+    rect(84, TOP + FH + 3, 22, 8, '#EEE'); for (let c = 1; c < 3; c++) rect(84 + c * 7.3, TOP + FH + 3, 0.5, 8, '#BBB')
+    for (let i = 0; i < (fx.tasksTodo || 0); i++) rect(85 + (i % 2) * 3, TOP + FH + 5 + Math.floor(i / 2) * 2, 2, 1, '#E8C15A')
+    for (let i = 0; i < (fx.tasksDone || 0); i++) rect(99 + (i % 2) * 3, TOP + FH + 5 + Math.floor(i / 2) * 2, 2, 1, '#7FD1A8')
+    rect(88, f - 3, 14, 1, '#6B4A35'); rect(89, f - 2, 1, 2, '#4B3325'); rect(100, f - 2, 1, 2, '#4B3325')
+    f = floorY(2)
+    for (const x of SESSION_DESKS) { rect(x - 5, f - 3, 10, 1, '#6B4A35'); rect(x - 3, f - 7, 5, 4, '#2A2A2A'); rect(x - 2, f - 6, 3, 2, crabs.some(c => c.role === 'session' && c.deskX === x && !c.idle && !c.plan.length) ? '#7FD1A8' : '#2F3F45') }
+    shelf(72, f); shelf(80, f); shelf(88, f); plant(97, f); rect(94, f - 6, 1, 6, '#777'); rect(92, f - 8, 4, 2, '#E8C15A')
+    f = floorY(3)
+    rect(26, f - 3, 14, 2, '#5A3E66'); rect(26, f - 5, 14, 2, '#6E4C7D'); rect(25, f - 4, 1, 3, '#6E4C7D'); rect(40, f - 4, 1, 3, '#6E4C7D')
+    rect(44, TOP + 3 * FH + 4, 8, 6, '#222'); rect(45, TOP + 3 * FH + 5, 6, 4, ['#4D7FB0', '#7FD1A8', '#D97757'][Math.floor(t / 20) % 3])
+    rect(55, f - 3, 12, 1, '#2E7D5B'); rect(61, f - 4, 1, 1, '#ddd'); rect(56, f - 2, 1, 2, '#333'); rect(65, f - 2, 1, 2, '#333')
+    rect(76, f - 6, 4, 6, '#3A3A3A'); px(77, f - 4, '#D97757'); const s = Math.floor(t / 5) % 2; px(77 + s, f - 8, '#888'); px(78 - s, f - 9, '#666')
+    rect(84, f - 7, 3, 3, '#9FD3E8'); rect(84, f - 4, 3, 4, '#DDD')
+    rect(99, f - 11, 7, 11, '#C9CED2'); rect(104, f - 9, 1, 2, '#888')
+    rect(89, f - 3, 8, 1, '#6B4A35'); rect(90, f - 2, 1, 2, '#4B3325'); rect(95, f - 2, 1, 2, '#4B3325')
+    if (isFx('truck')) { const k = (tick - fx.truckAt) / 40; const tx = W - k * 30; rect(tx, H - 6, 10, 4, '#3E6AA8'); rect(tx - 3, H - 5, 3, 3, '#9FD3E8'); px(tx + 1, H - 2, '#222'); px(tx + 8, H - 2, '#222') }
+    if (isFx('bird')) { const k = Math.min(1, (tick - fx.birdAt) / 30); const bx = 2 + k * 30, by = TOP + 1 + k * 4; rect(bx, by, 2, 1, '#DDD'); px(bx + 2, by, '#999'); px(bx + (t % 2), by - 1, '#EEE') }
+  }
+  function shelf(x, f) { rect(x, f - 12, 6, 12, '#5A3E2A'); for (let j = 0; j < 3; j++) for (let i = 0; i < 5; i++) rect(x + 0.5 + i, f - 11 + j * 3.8, 1, 2.8, ['#3E6AA8', '#D97757', '#E8C15A', '#2E9E6A', '#9A5CB4'][(i + j * 2 + x) % 5]) }
+  function plant(x, f) { rect(x, f - 3, 3, 3, '#8A5A3A'); rect(x - 1, f - 6, 2, 3, '#2E9E6A'); rect(x + 1, f - 7, 2, 4, '#3DB47A'); px(x + 3, f - 5, '#2E9E6A') }
+  function clock(x, y, t) { rect(x, y, 3, 3, '#EEE'); px(x + 1, y + 1, '#222'); const a = (isFx('rewind') ? -1 : 1) * Math.floor(t / (isFx('rewind') ? 2 : 10)); const k = ((a % 4) + 4) % 4; px(x + [1, 2, 1, 0][k], y + [0, 1, 2, 1][k], '#D97757') }
+  function rack(x, f, t) { rect(x, f - 12, 5, 12, '#222'); for (let j = 0; j < 5; j++) { rect(x + 1, f - 11 + j * 2, 3, 1, '#333'); px(x + 3, f - 11 + j * 2, Math.floor(t / 4 + j * 3) % 4 ? '#3DB47A' : '#E8C15A') } }
+
+  // ---------- crabs ----------
+  const OR = '#D97757', SH = '#B9583B', EYE = '#1A1412'
+  const BODY = ['.OOOOOOO.', '.OEOOOEO.', 'OOOOOOOOO', '.OOOOOOS.']
+  const LEGS = [['.O.O.O.O.', '.O.O.O.O.'], ['.O.O.O.O.', '..O.O.O.O'], ['.O.O.O.O.', '.O.O.O.O.'], ['.O.O.O.O.', 'O.O.O.O..']]
+  const hand = (x, d) => d > 0 ? x + 9 : x - 2
+  const held = fill => (x, y, t, d) => fill(hand(x, d), y, t, d)
+  let crownColor = '#E8C15A'
+  const ACC = {
+    crown: (x, y) => { rect(x + 2, y - 2, 5, 2, crownColor); px(x + 2, y - 3, crownColor); px(x + 4, y - 3, crownColor); px(x + 6, y - 3, crownColor); px(x + 4, y - 1, '#D9534F') },
+    miner: (x, y, t, d) => { rect(x + 1, y - 2, 7, 2, '#7A4A2A'); rect(x, y - 1, 9, 1, '#5C3720'); rect(d > 0 ? x + 6 : x + 1, y - 2, 2, 1, '#FFF3B0') },
+    plan: (x, y, t) => { rect(x + 1, y - 2, 7, 2, '#2E9E6A'); rect(x + 3, y - 2, 3, 1, '#F2F2F2'); rect(x + 9, y - 6, 1, 7, '#AAA'); const w = Math.floor(t / 5) % 2; rect(x + 10, y - 6 + w, 3, 2, '#fff') },
+    hard: (x, y) => { rect(x + 1, y - 2, 7, 2, '#E8B83A'); rect(x, y - 1, 9, 1, '#C9971F'); px(x + 4, y - 2, '#F6D77A') },
+    detective: (x, y) => { rect(x + 1, y - 2, 7, 2, '#6B5440'); rect(x, y - 1, 9, 1, '#4B3A2C'); rect(x + 2, y - 2, 5, 1, '#3A2C20') },
+    wizard: (x, y) => { rect(x + 2, y - 2, 5, 2, '#5B3FA0'); rect(x + 3, y - 4, 3, 2, '#5B3FA0'); px(x + 4, y - 5, '#5B3FA0'); px(x + 3, y - 2, '#E8C15A') },
+    teamcap: (x, y) => { rect(x + 1, y - 2, 7, 2, '#D9534F'); rect(x + 6, y - 1, 3, 1, '#B03A36') },
+    librarian: (x, y) => { rect(x + 2, y - 2, 5, 2, '#6B3A5A'); px(x + 4, y - 3, '#6B3A5A'); rect(x + 1, y + 1, 3, 1, '#2A211D'); rect(x + 5, y + 1, 3, 1, '#2A211D') },
+    headphones: (x, y) => { rect(x + 1, y - 1, 7, 1, '#2A2A2A'); rect(x, y, 1, 2, '#D97757'); rect(x + 8, y, 1, 2, '#D97757') },
+    scarf: (x, y) => { rect(x + 1, y + 2, 7, 1, '#3E6AA8'); rect(x + 6, y + 3, 1, 2, '#3E6AA8') },
+    beanie: (x, y) => { rect(x + 1, y - 2, 7, 2, '#2E9E6A'); px(x + 4, y - 3, '#E8C15A') },
+    party: (x, y) => { rect(x + 3, y - 2, 3, 2, '#E85A9A'); px(x + 4, y - 3, '#E85A9A'); px(x + 4, y - 4, '#E8C15A') },
+    bandage: (x, y) => { rect(x + 1, y - 1, 7, 1, '#F5F5F5'); px(x + 6, y - 1, '#D9534F') },
+    shoes: (x, y) => { rect(x, y + 5, 3, 1, '#E8C15A'); rect(x + 6, y + 5, 3, 1, '#E8C15A') },
+    mug: held((bx, y, t) => { rect(bx, y + 1, 2, 2, '#F5F5F5'); if (Math.floor(t / 5) % 2) px(bx, y - 1, '#888') }),
+    book: held((bx, y) => { rect(bx, y, 2, 3, '#3E6AA8'); px(bx, y + 1, '#E8C15A') }),
+    rulebook: held((bx, y) => { rect(bx, y, 2, 3, '#B03A36'); px(bx, y + 1, '#F5EEDC') }),
+    dictionary: held((bx, y) => { rect(bx, y, 3, 3, '#777'); px(bx + 1, y + 1, '#E8C15A') }),
+    report: held((bx, y) => { rect(bx, y, 2, 3, '#F5EEDC'); px(bx, y + 1, '#888') }),
+    letter: held((bx, y) => { rect(bx, y, 3, 2, '#F5EEDC'); px(bx + 1, y, '#D97757') }),
+    capsule: held((bx, y) => { rect(bx, y, 2, 3, '#E8C15A'); px(bx, y + 1, '#B08D57') }),
+    newspaper: held((bx, y) => { rect(bx, y, 3, 2, '#DDD'); rect(bx, y, 3, 0.5, '#555') }),
+    notebook: held((bx, y, t) => { rect(bx, y, 2, 3, '#2E9E6A'); px(bx + (t % 2), y + 1, '#F5EEDC') }),
+    clipboard: held((bx, y) => { rect(bx, y, 2, 3, '#B08D57'); rect(bx, y + 1, 2, 1, '#F5EEDC') }),
+    magnifier: held((bx, y, t, d) => { rect(bx, y - 1, 2, 2, '#9FD3E8'); px(bx + (d > 0 ? -1 : 2), y + 1, '#6B5440') }),
+    binoculars: held((bx, y) => { rect(bx, y, 1, 2, '#333'); rect(bx + 1, y, 1, 2, '#333') }),
+    toolbox: held((bx, y) => { rect(bx - 1, y + 1, 4, 2, '#D9534F'); rect(bx, y, 2, 1, '#888') }),
+    wrench: held((bx, y) => { rect(bx, y, 1, 3, '#AAA'); px(bx + 1, y, '#AAA') }),
+    hammer: held((bx, y, t) => { rect(bx, y, 1, 3, '#8A6A4A'); rect(bx - 1, y - (t % 4 < 2 ? 1 : 0), 3, 1, '#777') }),
+    megaphone: held((bx, y) => { rect(bx, y, 2, 2, '#E8C15A'); rect(bx + 2, y - 1, 1, 4, '#E8C15A') }),
+    alarmclock: held((bx, y, t) => { rect(bx, y, 3, 3, '#D9534F'); px(bx + 1, y + 1, '#FFF'); if (t % 4 < 2) { px(bx - 1, y - 1, '#FFF'); px(bx + 3, y - 1, '#FFF') } }),
+    phone: (x, y, t, d) => { rect(d > 0 ? x + 8 : x, y, 1, 3, '#D9534F') },
+    spellbook: held((bx, y, t) => { rect(bx, y, 3, 2, '#5B3FA0'); if (t % 3) px(bx + 1, y - 1 - (t % 2), '#E8C15A'); if (t % 4 < 2) px(bx + 2, y - 2, '#C9B6F2') }),
+    blueprint: (x, y) => { rect(x - 1, y + 1, 11, 3, '#3E6AA8'); rect(x, y + 2, 4, 1, '#9FD3E8'); rect(x + 5, y + 2, 3, 1, '#9FD3E8') },
+    map: (x, y) => { rect(x - 1, y + 1, 11, 3, '#E8D7A0'); rect(x + 1, y + 2, 3, 1, '#2E9E6A'); px(x + 7, y + 2, '#D9534F') },
+    sign: (x, y) => { rect(x + 3, y - 7, 1, 5, '#8A6A4A'); rect(x + 1, y - 9, 5, 3, '#F5EEDC'); px(x + 3, y - 8, '#D97757') },
+    stop: (x, y) => { rect(x + 3, y - 7, 1, 5, '#8A6A4A'); rect(x + 1, y - 10, 5, 4, '#D9534F'); rect(x + 2, y - 9, 3, 1, '#FFF') },
+    bell: (x, y, t) => { rect(x + 9, y - 3, 1, 3, OR); rect(x + 9, y - 5, 2, 2, '#E8C15A'); if (t % 4 < 2) { px(x + 12, y - 6, '#FFF'); px(x + 7, y - 6, '#FFF') } },
+    stampOk: (x, y) => { rect(x + 3, y - 6, 3, 3, '#2E9E6A'); px(x + 4, y - 5, '#FFF') },
+    stampNo: (x, y) => { rect(x + 3, y - 6, 3, 3, '#D9534F'); px(x + 3, y - 6, '#FFF'); px(x + 5, y - 4, '#FFF') },
+    broom: (x, y, t, d) => { const bx = d > 0 ? x + 9 : x - 1; rect(bx, y - 2, 1, 6, '#8A6A4A'); rect(bx - 1 + (t % 2), y + 4, 3, 1, '#E8C15A') },
+    parcel: held((bx, y) => { rect(bx, y, 3, 3, '#B08D57'); rect(bx, y + 1, 3, 1, '#8A6A3A') }),
+    box: held((bx, y) => { rect(bx - 1, y - 1, 4, 4, '#B08D57') }),
+    juggle: (x, y, t) => { for (let i = 0; i < 3; i++) { const a = t / 3 + i * 2.1; px(x + 4 + Math.cos(a) * 3, y - 3 + Math.sin(a) * 2, ['#D9534F', '#7FD1A8', '#E8C15A'][i]) } },
+    wave: (x, y, t, d) => { if (Math.floor(t / 4) % 2) rect(d > 0 ? x + 9 : x - 1, y - 2, 1, 3, OR) },
+    think: (x, y, t) => { px(x + 8, y - 2, '#DDD'); rect(x + 9, y - 5, 4, 2, '#DDD'); px(x + 10 + (Math.floor(t / 4) % 2), y - 4, '#555') },
+    eyes: (x, y, t) => { px(x + 2 + (Math.floor(t / 6) % 2), y + 1, '#FFF') },
+  }
+  function drawCrab(c, t, standY) {
+    const x = c.x - 4, y = standY - 6 + (c.hop || 0), d = c.dir
+    const legs = c.moving ? LEGS[Math.floor(c.x * 1.2) & 3] : LEGS[0]
+    const shut = c.sleep || (t + c.seed) % 60 < 2
+    const sx = c.shake ? (t % 2 ? 0.5 : -0.5) : 0
+    ;[...BODY, ...legs].forEach((row, j) => [...row].forEach((ch, i) => {
+      const ix = d < 0 ? 8 - i : i
+      if (ch === 'O') px(x + ix + sx, y + j, OR)
+      else if (ch === 'S') px(x + ix + sx, y + j, SH)
+      else if (ch === 'E') px(x + ix + sx, y + j, shut ? OR : EYE)
+    }))
+    if (shut) { px(x + 1, y + 2, EYE); px(x + 7, y + 2, EYE) }
+    for (const a of c.acc) if (ACC[a]) ACC[a](x, y, t, d)
+    if (c.tag && (c.tagUntil === undefined || t < c.tagUntil)) { g.font = 'bold 10px ui-monospace,monospace'; g.fillStyle = c.tagColor; g.fillText(c.tag, (x - 1) * S, (y + 8) * S) }
+  }
+
+  const LINES = [['ship it!', 'tests first.'], ['who broke main?', 'not me', 'git blame says u'], ['need coffee', 'same'], ['LGTM', 'u didnt read it', '...LGTM'],
+    ['tabs or spaces?', 'FIGHT ME'], ['works on my machine', 'ship ur machine'], ['found the bug!', 'what was it', 'a typo'], ['deploy friday?', 'no.'],
+    ['merge conflict :(', 'rebase?', 'scary'], ['nice PR!', 'ty <3'], ['token budget!!', 'compact it'], ['is it lunch', 'its 10am'],
+    ['did u see that diff?', '400 files', 'lol'], ['who ate my snack', '...', 'the Explore crab'], ['how was the job?', 'grep grep grep', 'living the dream'],
+    ['the boss is busy', 'big refactor', 'brave'], ['i got a hat today', 'nice hat'], ['elevator again?', 'only fits two', 'cozy']]
+  const bubbles = []
+  const say = (c, text, ticks = 30) => bubbles.push({ c, text, until: tick + ticks })
+
+  let nextId = 1
+  const makeCrab = o => Object.assign({ id: nextId++, x: 30, floor: 3, dir: 1, v: 0, acc: [], seed: Math.floor(rnd(0, 60)), plan: [], wait: 0, moving: false }, o)
+  const crabs = []
+  const main = makeCrab({ x: ST.desk, floor: 0, dir: -1, acc: ['crown'], tag: 'main', tagColor: '#E8C15A', role: 'main' })
+  const librarian = makeCrab({ x: 76, floor: 2, acc: ['librarian', 'book'], tag: 'enhancer', tagColor: '#E8A0C8', role: 'librarian' })
+  crabs.push(main, librarian)
+  const sessions = [
+    makeCrab({ x: SESSION_DESKS[0], floor: 2, deskX: SESSION_DESKS[0], acc: ['headphones'], tag: 'mod-dev', tagColor: '#C9B6F2', role: 'session' }),
+    makeCrab({ x: SESSION_DESKS[1], floor: 2, deskX: SESSION_DESKS[1], acc: ['scarf'], tag: 'website', tagColor: '#C9B6F2', role: 'session' }),
+  ]
+  crabs.push(...sessions)
+  ;[['mug'], ['party'], [], ['beanie']].forEach((acc, i) => crabs.push(makeCrab({ acc, floor: [3, 3, 3, 2][i], x: [34, 60, 92, 96][i], role: 'decor', wait: i * 15 })))
+
+  // ---------- standing room ----------
+  const BOUNDS = [[SHAFT + 5, W - 8], [SHAFT + 5, W - 8], [SHAFT + 5, W - 8], [SHAFT + 5, W - 12]]
+  function taken(floor, x, self) {
+    return crabs.some(o => o !== self && !o.inLift && (
+      (o.tFloor === floor && o.tx !== undefined && Math.abs(o.tx - x) < GAP) ||
+      (o.floor === floor && (!o.plan.length || o.awaitLift) && Math.abs(o.x - x) < GAP) ||
+      (o.floor === floor && o.waitX !== undefined && Math.abs(o.waitX - x) < GAP)))
+  }
+  function freeSpot(c, floor, want) {
+    const [lo, hi] = BOUNDS[floor]
+    for (let d = 0; d < 80; d++) for (const s of [1, -1]) { const x = Math.round(want + s * d); if (x >= lo && x <= hi && !taken(floor, x, c)) return x }
+    return Math.round(want)
+  }
+
+  // ---------- the elevator: two crabs at a time, eased, with sliding doors ----------
+  const lift = { floor: 3, y: floorY(3), door: 1, riders: [], target: null, dwell: 0, v: 0, state: 'idle' }
+  lift.drawRiders = () => lift.riders.forEach((r, i) => drawCrab({ ...r, x: 6 + i * 10, moving: false, dir: 1 }, tick, lift.y))
+  const waiting = () => crabs.filter(c => c.awaitLift && !c.inLift).sort((a, b) => a.queuedAt - b.queuedAt)
+  function stepLift() {
+    if (lift.state === 'idle') {
+      if (lift.riders.length) lift.target = lift.riders[0].liftTo
+      else { const w = waiting()[0]; if (!w) return; lift.target = w.floor }
+      lift.state = lift.target === lift.floor ? 'open' : 'closing'; lift.dwell = 0
+    }
+    if (lift.state === 'closing') { lift.door = Math.max(0, lift.door - 0.08); if (lift.door === 0) lift.state = 'moving'; return }
+    if (lift.state === 'moving') {
+      const ty = floorY(lift.target), dist = ty - lift.y
+      if (Math.abs(dist) < 0.05) { lift.y = ty; lift.floor = lift.target; lift.v = 0; lift.state = 'opening'; return }
+      const want = Math.sign(dist) * Math.min(0.45, Math.abs(dist) * 0.12 + 0.04)
+      lift.v += (want - lift.v) * 0.2; lift.y += lift.v
+      if (Math.sign(ty - lift.y) !== Math.sign(dist)) lift.y = ty
+      return
+    }
+    if (lift.state === 'opening') { lift.door = Math.min(1, lift.door + 0.08); if (lift.door === 1) { lift.state = 'open'; lift.dwell = 0 } return }
+    if (lift.state === 'open') {
+      if (lift.dwell++ === 4) {
+        lift.riders.filter(r => r.liftTo === lift.floor).forEach((r, i) => { r.inLift = false; r.awaitLift = false; r.waitX = undefined; r.floor = lift.floor; r.x = SHAFT + 3 + i * 10; r.v = 0 })
+        lift.riders = lift.riders.filter(r => r.inLift)
+        for (const w of waiting().filter(w => w.floor === lift.floor)) { if (lift.riders.length >= 2) break; w.inLift = true; w.waitX = undefined; lift.riders.push(w) }
+      }
+      if (lift.dwell > 14) lift.state = 'idle'
+    }
+  }
+
+  // ---------- walking, eased ----------
+  function goTo(c, floor, want, exact) {
+    const x = exact ? want : freeSpot(c, floor, want)
+    c.plan = []; c.tFloor = floor; c.tx = x
+    if (floor !== c.floor) { const wx = freeSpot(c, c.floor, WAIT_X); c.waitX = wx; c.plan.push({ walk: wx }); c.plan.push({ lift: floor }) }
+    c.plan.push({ walk: x })
+    return x
+  }
+  function move(c) {
+    if (c.fight) {
+      if (tick < c.fightUntil) { const b = frameNo % 4 < 2; c.hop = b ? -1 : 0; c.fight.hop = b ? 0 : -1; if (frameNo % 6 === 0) dust.push({ x: (c.x + c.fight.x) / 2, y: floorY(c.floor) - 4, until: tick + 3 }); return }
+      c.hop = 0; c.fight.hop = 0; c.fight = null
+    }
+    const step = c.plan[0]
+    if (!step || c.inLift) { c.moving = false; c.v = 0; return }
+    if (step.walk !== undefined) {
+      const dx = step.walk - c.x
+      if (Math.abs(dx) < 0.15) { c.x = step.walk; c.plan.shift(); c.moving = false; c.v = 0; if (!c.plan.length) { c.tx = undefined; if (c.arrive) { const f = c.arrive; c.arrive = null; f() } } return }
+      const max = c.fast ? 0.5 : 0.25
+      const want = Math.sign(dx) * Math.min(max, Math.abs(dx) * 0.18 + 0.04)
+      c.v += (want - c.v) * 0.25
+      c.dir = Math.sign(dx); c.x += c.v; c.moving = true
+      if (Math.sign(step.walk - c.x) !== Math.sign(dx)) c.x = step.walk
+    } else {
+      c.moving = false; c.v = 0
+      if (c.floor === step.lift && !c.inLift) { c.plan.shift(); c.awaitLift = false; return }
+      if (!c.awaitLift) { c.awaitLift = true; c.queuedAt = tick }
+      c.liftTo = step.lift
+    }
+  }
+
+  // ---------- background crabs ----------
+  const DECOR_CAP = 6
+  function idle(c) {
+    if (c.plan.length || c.inLift || c.awaitLift) return
+    if (c.goHomeAt && tick > c.goHomeAt) { leave(c); return }
+    if (c.wait > 0) { c.wait--; return }
+    c.sleep = false
+    const roll = Math.random()
+    if (roll < 0.26) { const f = Math.random() < 0.3 ? Math.floor(rnd(1, 4)) : Math.max(1, c.floor); goTo(c, f, rnd(BOUNDS[f][0], BOUNDS[f][1])); c.wait = 20 }
+    else if (roll < 0.52) {
+      const mate = crabs.find(o => o !== c && o.role === 'decor' && o.floor === c.floor && !o.plan.length && !o.inLift && !o.awaitLift && Math.abs(o.x - c.x) < 30 && Math.abs(o.x - c.x) >= GAP)
+      if (mate) {
+        const lines = pick(LINES); c.dir = mate.x > c.x ? 1 : -1; mate.dir = -c.dir; mate.sleep = false
+        lines.forEach((l, i) => setTimeout(() => say(i % 2 ? mate : c, l, 24), i * 2200))
+        c.wait = 30 + lines.length * 22; mate.wait = c.wait
+        if (lines[1] === 'FIGHT ME' || Math.random() < 0.08) { c.fight = mate; c.fightUntil = tick + 40 + lines.length * 22 }
+      } else c.wait = 30
+    }
+    else if (roll < 0.64) { goTo(c, 3, 32); c.arrive = () => { c.sleep = true; c.wait = 120; say(c, 'zzz', 40) } }
+    else if (roll < 0.74) { goTo(c, 3, 78); c.arrive = () => { if (!c.acc.includes('mug')) c.acc = [...c.acc, 'mug']; say(c, pick(['ahh coffee', 'refill!', '*sip*'])); c.wait = 40 } }
+    else if (roll < 0.82) { goTo(c, 3, 46); c.arrive = () => { c.dir = -1; say(c, pick(['ooh a show', 'whats on?', 'turn it up'])); c.wait = 80 } }
+    else if (roll < 0.9) { goTo(c, 2, 84); c.arrive = () => { if (!c.acc.includes('book')) c.acc = [...c.acc, 'book']; say(c, pick(['good read', 'hmm, docs', 'chapter 3'])); c.wait = 70 } }
+    else c.wait = Math.floor(rnd(30, 80))
+  }
+  function leave(c) {
+    c.role = 'leaving'; c.tag = undefined; c.sleep = false; say(c, pick(['bye all!', 'heading home', 'see ya']))
+    goTo(c, 3, W - 4, true); c.arrive = () => { const i = crabs.indexOf(c); if (i >= 0) crabs.splice(i, 1) }
+  }
+  function keepTidy() { const decor = crabs.filter(o => o.role === 'decor'); if (decor.length > DECOR_CAP) leave(decor.find(o => !o.goHomeAt) || decor[0]) }
+
+  // ---------- real crabs: a replay of what Claude does ----------
+  const AGENTS = {
+    Explore: { acc: ['miner'], task: 'find failing tests', lines: ['grep "login"', 'reading tests…', 'found 3 files'], report: 'found 3 failing tests' },
+    Plan: { acc: ['plan'], task: 'plan the refactor', lines: ['step 1…', 'drafting plan', 'weighing options'], report: 'plan: 4 steps' },
+    general: { acc: ['hard'], task: 'fix auth types', lines: ['Edit auth.ts', 'running tests', 'fixing types'], report: 'types fixed, tests green' },
+    reviewer: { acc: ['detective'], task: 'review the diff', lines: ['hmm…', 'nit: naming', 'line 42?'], report: '2 nits, 1 bug' },
+    skill: { acc: ['wizard'], task: 'run /simplify', lines: ['reading SKILL.md', 'poof', 'simplifying'], report: 'simplified 3 files', fails: true },
+  }
+  let mainTool = ''
+  const at = (x, acc, text, extra) => () => { goTo(main, 0, x, true); main.arrive = () => { main.acc = ['crown', ...(main.fast ? ['shoes'] : []), ...acc]; if (text) say(main, text, 40); if (extra) extra() } }
+  const now = (acc, text, extra) => () => { main.acc = ['crown', ...(main.fast ? ['shoes'] : []), ...acc]; if (text) say(main, text, 40); if (extra) extra() }
+  const burst = (kind, x, y) => { for (let i = 0; i < 24; i++) parts.push({ kind, x: (x ?? main.x) + rnd(-4, 4), y: y ?? floorY(0) - 8, vx: rnd(-0.4, 0.4), vy: rnd(-0.6, -0.15), until: tick + 30, c: kind === 'coins' ? '#E8C15A' : pick(['#E85A9A', '#7FD1A8', '#E8C15A', '#9FC4E8', '#D97757']) }) }
+  const puff = c => { for (let i = 0; i < 8; i++) parts.push({ kind: 'smoke', x: c.x + rnd(-2, 2), y: floorY(c.floor) - 7, vx: rnd(-0.1, 0.1), vy: rnd(-0.2, -0.05), until: tick + 25, c: '#888' }) }
+  const fail = text => () => { fxOn('alarm', 40); main.shake = true; say(main, text, 30); puff(main); setTimeout(() => { main.shake = false }, 2500) }
+  const tubeSend = (from, to, then) => { fx.tubeAt = tick; fx.tubeFrom = from; fx.tubeTo = to; fxOn('tube', 22); setTimeout(then, 2400) }
+
+  const EVENTS = [
+    { cat: 'You', name: 'You send a prompt', how: 'prompt.submit', act: 'a letter drops into the inbox; main reads it', dur: 55, run: () => { fx.letterY = TOP + 1; fxOn('letter', 45); at(ST.inbox, ['letter'], 'new task: "fix login"')() } },
+    { cat: 'You', name: 'Enhance used', how: 'this mod', act: 'the librarian crab hurries up with a book', dur: 70, run: () => { goTo(librarian, 0, ST.inbox + 12); say(librarian, 'polishing your prompt!', 40); librarian.arrive = () => { librarian.dir = -1; say(librarian, 'clearer now!', 30); setTimeout(() => goTo(librarian, 2, 76), 3500) } } },
+    { cat: 'You', name: 'You are typing', how: 'prompt.change', act: 'main looks up from its work, listening', dur: 30, run: now(['eyes'], 'hm? go on…') },
+    { cat: 'You', name: 'Image pasted', how: 'prompt.attachment', act: 'a picture frame appears on the wall', dur: 40, run: at(ST.desk - 2, [], 'ooh, a screenshot', () => { fx.picture = true }) },
+    { cat: 'You', name: '@file mentioned', how: 'prompt.mention', act: 'a sticky note goes on the whiteboard', dur: 35, run: at(ST.board, [], '@auth.ts noted', () => { fx.stickies = Math.min(4, (fx.stickies || 0) + 1) }) },
+    { cat: 'You', name: 'Slash command expanded', how: 'UserPromptExpansion', act: 'unrolls a scroll of instructions', dur: 40, run: now(['blueprint'], '/review expands…') },
+    { cat: 'You', name: 'Interrupted (Esc)', how: 'turn.complete (interrupted)', act: 'freezes and holds up a stop sign', dur: 40, run: now(['stop'], 'stopping!') },
+    { cat: 'Turn', name: 'Turn starts', how: 'turn.start', act: 'hops up and gets to work', dur: 25, run: now([], 'right, lets go', () => { main.hop = -1; setTimeout(() => { main.hop = 0 }, 500) }) },
+    { cat: 'Turn', name: 'Thinking', how: 'turn.step', act: 'paces back and forth with a thought cloud', dur: 60, run: () => { mainTool = 'think'; main.acc = ['crown', 'think'] } },
+    { cat: 'Turn', name: 'Several tools at once', how: 'PostToolBatch', act: 'juggles', dur: 40, run: now(['juggle'], '3 tools in parallel!') },
+    { cat: 'Turn', name: 'Turn done, waiting for you', how: 'turn.complete / Stop', act: 'waves "your turn!"', dur: 70, run: at(ST.inbox + 2, ['wave'], 'your turn!') },
+    { cat: 'Turn', name: 'Turn failed', how: 'StopFailure', act: 'red alarm, smoke, shakes', dur: 45, run: fail('API error, retrying…') },
+    { cat: 'Tools', name: 'Read a file', how: 'tool.call Read', act: 'pulls a book from the shelf', dur: 45, run: at(ST.shelf, ['book'], 'Read register.ts') },
+    { cat: 'Tools', name: 'Grep / Glob', how: 'tool.call Grep, Glob', act: 'rifles the card catalogue with a magnifier', dur: 45, run: at(ST.catalog, ['magnifier'], 'Grep "enhance"') },
+    { cat: 'Tools', name: 'Edit / Write a file', how: 'tool.call Edit, Write', act: 'types at the desk', dur: 55, run: () => { mainTool = 'Edit'; at(ST.desk, [], 'Edit sprite.ts')() } },
+    { cat: 'Tools', name: 'Notebook edit', how: 'tool.call NotebookEdit', act: 'scribbles in a lab notebook', dur: 40, run: at(ST.desk + 4, ['notebook'], 'NotebookEdit data.ipynb') },
+    { cat: 'Tools', name: 'Code intelligence', how: 'tool.call LSP', act: 'checks the big dictionary', dur: 40, run: at(ST.shelf, ['dictionary'], 'go to definition…') },
+    { cat: 'Tools', name: 'Tool search', how: 'tool.call ToolSearch', act: 'rummages in the toolbox', dur: 40, run: at(ST.phone, ['toolbox'], 'which tool fits?') },
+    { cat: 'Tools', name: 'Tool failed', how: 'PostToolUseFailure', act: 'smoke puff, shakes it off', dur: 40, run: fail('oops, file not found') },
+    { cat: 'Shell', name: 'Bash command', how: 'tool.call Bash', act: 'works the console', dur: 45, run: at(ST.console, [], 'ls -la') },
+    { cat: 'Shell', name: 'Tests pass', how: 'Bash result, exit 0', act: 'confetti', dur: 55, run: at(ST.console, [], 'npm test', () => setTimeout(() => { say(main, 'all green!', 30); burst('confetti') }, 2500)) },
+    { cat: 'Shell', name: 'Tests fail', how: 'Bash result, exit not 0', act: 'red alarm light', dur: 55, run: at(ST.console, [], 'npm test', () => setTimeout(fail('2 failing!'), 2500)) },
+    { cat: 'Shell', name: 'Build', how: 'Bash "build"', act: 'hammers away', dur: 45, run: at(ST.console, ['hammer'], 'npm run build') },
+    { cat: 'Shell', name: 'Install packages', how: 'Bash "npm i"', act: 'a delivery truck pulls up', dur: 50, run: () => { fx.truckAt = tick; fxOn('truck', 45); at(ST.console, [], 'npm install, boxes incoming')() } },
+    { cat: 'Shell', name: 'Background shell', how: 'Bash run_in_background', act: 'an hourglass on the console', dur: 35, run: at(ST.console, [], 'dev server running', () => fxOn('hourglass', 300)) },
+    { cat: 'Shell', name: 'Watching output', how: 'tool.call Monitor', act: 'watches through binoculars', dur: 40, run: at(ST.console - 8, ['binoculars'], 'watching the logs') },
+    { cat: 'Git', name: 'git commit', how: 'Bash "git commit"', act: 'stamps a parcel', dur: 40, run: at(ST.desk + 6, ['parcel'], 'git commit -m "crabs"') },
+    { cat: 'Git', name: 'git push', how: 'Bash "git push"', act: 'drops the parcel down the mail chute', dur: 55, run: () => { main.acc = ['crown', 'parcel']; goTo(main, 0, ST.chute + 4, true); say(main, 'git push!', 30); main.arrive = () => { main.acc = ['crown']; say(main, 'whoosh, pushed', 30); dust.push({ x: ST.chute, y: TOP + 8, until: tick + 10 }) } } },
+    { cat: 'Git', name: 'Pull request opened', how: 'Bash "gh pr create"', act: 'hangs a green PR frame on the wall', dur: 40, run: at(ST.desk + 4, [], 'PR #42 opened!', () => { fx.pr = true }) },
+    { cat: 'Git', name: 'Branch switch', how: 'Bash "git checkout"', act: 'reads the map', dur: 40, run: now(['map'], 'switching to feat/crabs') },
+    { cat: 'Git', name: 'Worktree created', how: 'WorktreeCreate', act: 'packs a box for the new desk', dur: 45, run: now(['box'], 'new worktree!') },
+    { cat: 'Web', name: 'Web search', how: 'tool.call WebSearch', act: 'looks through the telescope', dur: 45, run: at(ST.telescope, [], 'WebSearch: pixel crabs') },
+    { cat: 'Web', name: 'Fetch a page', how: 'tool.call WebFetch', act: 'a carrier pigeon brings a letter', dur: 55, run: () => { fx.birdAt = tick; fxOn('bird', 40); at(ST.telescope, [], 'a pigeon! (WebFetch)', () => setTimeout(() => { main.acc = ['crown', 'letter'] }, 2500))() } },
+    { cat: 'Agents', name: 'Subagent starts', how: 'agent.spawn / SubagentStart', act: 'main calls one out; a hatted crab rides up to the workshop', dur: 25, run: () => spawnAgent(pick(['Explore', 'Plan', 'general'])) },
+    { cat: 'Agents', name: 'Reviewer subagent', how: 'agent.spawn', act: 'a detective crab arrives', dur: 25, run: () => spawnAgent('reviewer') },
+    { cat: 'Agents', name: 'Skill used', how: 'tool.call Skill', act: 'opens a glowing spellbook', dur: 50, run: at(ST.desk - 6, ['spellbook'], 'casting /simplify') },
+    { cat: 'Agents', name: 'Forked skill (fails)', how: 'agent.spawn, SubagentStop', act: 'a wizard crab comes back bandaged', dur: 25, run: () => spawnAgent('skill') },
+    { cat: 'Agents', name: 'Team task created', how: 'TaskCreated', act: 'stickies go up on the team kanban', dur: 30, run: () => { fx.tasksTodo = Math.min(6, (fx.tasksTodo || 0) + 2); say(main, 'new team tasks', 25); teamMate() } },
+    { cat: 'Agents', name: 'Team task done', how: 'TaskCompleted', act: 'a sticky moves to Done', dur: 30, run: () => { if (fx.tasksTodo) { fx.tasksTodo--; fx.tasksDone = Math.min(6, (fx.tasksDone || 0) + 1) } say(main, 'task done!', 25) } },
+    { cat: 'Agents', name: 'Teammate idle', how: 'TeammateIdle', act: 'a red-cap teammate waits in the team room', dur: 25, run: () => { const t = crabs.find(c => c.role === 'teammate'); if (t) say(t, 'anything for me?', 30) } },
+    { cat: 'Sessions', name: 'Session messages session', how: 'session.send / session.receive', act: 'one session crab carries a letter to the other', dur: 70, run: () => sessionLetter() },
+    { cat: 'Sessions', name: 'Message to main', how: 'session.receive (peer)', act: 'a capsule shoots up the tube; main reads it', dur: 70, run: () => { const s = sessions[0]; say(s, 'telling main…', 30); tubeSend(2, 0, () => { at(ST.tube, ['capsule'], `from ${s.tag}: API is ready`)() }) } },
+    { cat: 'Sessions', name: 'Main messages a session', how: 'tool.call SendMessage', act: 'main sends a capsule down the tube', dur: 70, run: () => { at(ST.tube, ['capsule'], 'SendMessage to mod-dev', () => { main.acc = ['crown']; tubeSend(0, 2, () => { const s = sessions[0]; if (s) { s.acc = [...s.acc.filter(a => a !== 'capsule'), 'capsule']; say(s, 'got it, on it!', 35); setTimeout(() => { s.acc = s.acc.filter(a => a !== 'capsule') }, 4000) } }) })() } },
+    { cat: 'Sessions', name: 'List other sessions', how: 'tool.call ListAgents', act: 'checks the staff directory', dur: 35, run: at(ST.board, ['clipboard'], '2 sessions open') },
+    { cat: 'Sessions', name: 'Session opens', how: '~/.claude/sessions', act: 'a crab walks into Sessions', dur: 20, run: () => openSession() },
+    { cat: 'Sessions', name: 'Session busy / idle', how: '~/.claude/sessions', act: 'types, or dozes', dur: 20, run: () => { const s = pick(sessions); if (s) { s.idle = !s.idle; log(`  ${s.tag} is ${s.idle ? 'idle' : 'busy'}`) } } },
+    { cat: 'Sessions', name: 'Session closes', how: '~/.claude/sessions', act: 'its crab heads home', dur: 20, run: () => closeSession() },
+    { cat: 'MCP', name: 'MCP tool call', how: 'tool.call mcp__*', act: 'makes a phone call', dur: 50, run: at(ST.phone, ['phone'], 'calling github…', () => fxOn('phone', 45)) },
+    { cat: 'MCP', name: 'MCP asks for input', how: 'Elicitation', act: 'holds out a clipboard form', dur: 45, run: at(ST.inbox + 2, ['clipboard'], 'github needs a token') },
+    { cat: 'Permissions', name: 'Needs permission', how: 'PermissionRequest / tool.check ask', act: 'rings a bell, claw raised', dur: 55, run: at(ST.inbox, ['bell'], 'may I run rm -rf dist?') },
+    { cat: 'Permissions', name: 'Permission granted', how: 'tool.check allow', act: 'a green stamp', dur: 30, run: now(['stampOk'], 'approved!') },
+    { cat: 'Permissions', name: 'Permission denied', how: 'PermissionDenied', act: 'a red stamp, a sigh', dur: 35, run: now(['stampNo'], 'denied… fair') },
+    { cat: 'Permissions', name: 'Asks you a question', how: 'tool.call AskUserQuestion', act: 'holds up a "?" sign', dur: 60, run: at(ST.inbox + 2, ['sign'], 'which layout do you like?') },
+    { cat: 'Permissions', name: 'Plan mode', how: 'tool.call ExitPlanMode', act: 'unrolls a blueprint', dur: 55, run: at(ST.board + 6, ['blueprint'], 'here is the plan…') },
+    { cat: 'Tasks', name: 'Todo list written', how: 'tool.call TodoWrite', act: 'writes items on the whiteboard', dur: 55, run: at(ST.board, [], 'making a todo list', () => { fx.todos = 3; fx.ticked = 0 }) },
+    { cat: 'Tasks', name: 'Todo ticked', how: 'tool.call TodoWrite', act: 'ticks one off', dur: 25, run: at(ST.board, [], 'tick!', () => { fx.ticked = Math.min(3, (fx.ticked || 0) + 1) }) },
+    { cat: 'Tasks', name: 'Scheduled for later', how: 'tool.call CronCreate / ScheduleWakeup', act: 'sets an alarm clock', dur: 40, run: now(['alarmclock'], 'wake me at 3pm') },
+    { cat: 'Tasks', name: 'Sends you a notification', how: 'tool.call PushNotification / Notification', act: 'shouts through a megaphone', dur: 35, run: now(['megaphone'], 'hey! done!') },
+    { cat: 'Tasks', name: 'Remote trigger', how: 'tool.call RemoteTrigger', act: 'the rooftop dish blinks', dur: 35, run: now([], 'pinging the cloud', () => fxOn('dish', 35)) },
+    { cat: 'Tasks', name: 'Artifact published', how: 'tool.call Artifact', act: 'pins a poster on the wall', dur: 40, run: at(ST.catalog, [], 'published a page!', () => { fx.poster = true }) },
+    { cat: 'Context', name: 'Context filling up', how: 'session.measure', act: 'the wall gauge rises; papers pile up', dur: 30, run: () => { fx.context = Math.min(0.95, (fx.context || 0.3) + 0.3); say(main, `context ${Math.round(fx.context * 100)}%`, 25) } },
+    { cat: 'Context', name: 'Compacting', how: 'PreCompact / PostCompact', act: 'sweeps the papers away', dur: 55, run: at(ST.desk + 3, ['broom'], 'compacting context…', () => { for (let i = 0; i < 6; i++) dust.push({ x: ST.desk + rnd(-6, 6), y: floorY(0) - 1, until: tick + 30 }); fx.context = 0.25 }) },
+    { cat: 'Context', name: 'CLAUDE.md loaded', how: 'InstructionsLoaded', act: 'reads the red rulebook', dur: 40, run: at(ST.shelf, ['rulebook'], 'house rules: use pnpm') },
+    { cat: 'Context', name: 'Cost milestone', how: 'session.measure', act: 'coins pop out', dur: 30, run: () => { say(main, '$5 spent!', 30); burst('coins') } },
+    { cat: 'Context', name: 'Rate limited', how: 'StopFailure (rate limit)', act: 'waits by the hourglass', dur: 45, run: at(ST.console, [], 'rate limited… waiting', () => fxOn('hourglass', 45)) },
+    { cat: 'Settings', name: 'Model switched', how: 'PostModelSwitch', act: 'the crown changes colour', dur: 35, run: () => { crownColor = crownColor === '#E8C15A' ? '#C9CED2' : '#E8C15A'; say(main, crownColor === '#E8C15A' ? 'now: Opus' : 'now: Sonnet', 30) } },
+    { cat: 'Settings', name: 'Fast mode', how: 'config.set', act: 'puts on running shoes, walks faster', dur: 35, run: () => { main.fast = !main.fast; main.acc = ['crown', ...(main.fast ? ['shoes'] : [])]; say(main, main.fast ? 'fast mode on!' : 'fast mode off', 30) } },
+    { cat: 'Settings', name: 'Settings changed', how: 'ConfigChange', act: 'tightens a bolt with a wrench', dur: 35, run: now(['wrench'], 'settings updated') },
+    { cat: 'Settings', name: 'Hooks run', how: 'classic hook events', act: 'the wall gears spin', dur: 30, run: () => { fxOn('gears', 30); say(main, 'hooks ran', 20) } },
+    { cat: 'Settings', name: 'Folder changed', how: 'CwdChanged / DirectoryAdded', act: 'carries a box to a new spot', dur: 40, run: at(ST.desk - 10, ['box'], 'cd ../api') },
+    { cat: 'Settings', name: 'File changed outside', how: 'FileChanged', act: 'a newspaper arrives', dur: 35, run: now(['newspaper'], 'someone edited README!') },
+    { cat: 'Settings', name: 'Remote control connected', how: 'session.attach', act: 'a phone on the desk lights up', dur: 35, run: at(ST.desk + 4, [], 'hi from your phone!', () => fxOn('phoneDock', 200)) },
+    { cat: 'Settings', name: 'Rewind', how: 'rewind / checkpoint restore', act: 'the wall clock spins backwards', dur: 35, run: now([], 'rewinding…', () => fxOn('rewind', 30)) },
+    { cat: 'Settings', name: '/clear', how: 'SessionStart (clear)', act: 'wipes the whiteboard', dur: 40, run: at(ST.board, ['broom'], 'fresh start', () => { fx.todos = 0; fx.stickies = 0; fx.picture = false; fx.pr = false }) },
+    { cat: 'Settings', name: 'Session resumed', how: 'SessionStart (resume)', act: 'walks back in with a coffee', dur: 40, run: now(['mug'], 'where were we?') },
+    { cat: 'Settings', name: 'Idle a long time', how: 'no turn for a while', act: 'naps at the desk', dur: 90, run: at(ST.desk, [], '', () => { main.sleep = true; say(main, 'zzz', 60) }) },
+    { cat: 'Settings', name: 'Session ends', how: 'SessionEnd', act: 'turns the lights off', dur: 50, run: () => { say(main, 'night all', 30); fxOn('lightsOff', 45) } },
+  ]
+  let eventAt = -1, eventUntil = 0
+  function runMain() {
+    if (tick < eventUntil) { if (mainTool === 'think' && !main.plan.length) goTo(main, 0, main.x > ST.desk ? ST.desk - 10 : ST.desk + 10, true); return }
+    main.sleep = false; main.shake = false; mainTool = ''
+    eventAt = (eventAt + 1) % EVENTS.length
+    const e = EVENTS[eventAt]; eventUntil = tick + e.dur
+    main.acc = ['crown', ...(main.fast ? ['shoes'] : [])]
+    log(`[${e.cat}] ${e.name}`)
+    e.run()
+  }
+
+  function spawnAgent(type) {
+    const a = AGENTS[type]
+    say(main, `${type}, ${a.task}!`, 30)
+    const used = crabs.filter(c => c.role === 'agent').map(c => c.deskX)
+    const deskX = DESKS.find(d => !used.includes(d))
+    if (deskX === undefined) return
+    const c = makeCrab({ acc: [...a.acc], tag: type, tagColor: '#9FC4E8', role: 'agent', state: 'arriving', x: W - 4, floor: 3, dir: -1, deskX, a, type })
+    crabs.push(c)
+    goTo(c, 1, deskX, true); c.arrive = () => { c.state = 'work'; c.doneAt = tick + rnd(180, 280); say(c, 'on it!') }
+  }
+  function runAgent(c) {
+    if (c.state !== 'work') return
+    c.dir = 1
+    if (tick % 45 === c.seed % 45) say(c, pick(c.a.lines))
+    if (tick < c.doneAt) return
+    const failed = !!c.a.fails
+    c.state = 'reporting'; say(c, failed ? 'ow… it broke' : 'done!'); log(`  subagent ${failed ? 'failed' : 'finished'}: ${c.type}`)
+    c.acc = [...c.acc, failed ? 'bandage' : 'report']
+    goTo(c, 0, main.x + 11)
+    c.arrive = () => {
+      c.dir = main.x < c.x ? -1 : 1; say(c, failed ? 'skill crashed, sorry' : c.a.report, 35)
+      setTimeout(() => say(main, failed ? 'no worries, rest up' : pick(['thanks!', 'nice work', 'perfect'])), 2500)
+      setTimeout(() => {
+        c.acc = c.acc.filter(a => a !== 'report'); c.role = 'decor'; c.tag = `${c.type} (done)`; c.tagColor = '#888'; c.tagUntil = tick + 150
+        c.goHomeAt = tick + rnd(500, 800)
+        goTo(c, 3, rnd(28, 66)); c.arrive = () => { c.wait = 40; say(c, pick(['break time!', 'phew', 'coffee?'])) }
+        keepTidy()
+      }, 5000)
+    }
+  }
+  function teamMate() {
+    if (crabs.some(c => c.role === 'teammate')) return
+    const c = makeCrab({ acc: ['teamcap'], tag: 'teammate', tagColor: '#E89A9A', role: 'teammate', x: W - 4, floor: 3, dir: -1 })
+    crabs.push(c); goTo(c, 1, 94, true); c.arrive = () => { say(c, 'team reporting in'); c.goHomeAt = tick + 600 }
+  }
+  function sessionLetter() {
+    const [a, b] = sessions
+    if (!a || !b || a.plan.length || b.plan.length) return
+    a.acc = [...a.acc, 'letter']; say(a, `msg for ${b.tag}`, 30)
+    goTo(a, 2, b.deskX - 11, true)
+    a.arrive = () => {
+      a.dir = 1; b.dir = -1; b.sleep = false; say(a, 'the API is ready', 35)
+      setTimeout(() => { a.acc = a.acc.filter(x => x !== 'letter'); b.acc = [...b.acc, 'letter']; say(b, 'thanks! wiring it up', 35) }, 2600)
+      setTimeout(() => { b.acc = b.acc.filter(x => x !== 'letter'); goTo(a, 2, a.deskX, true) }, 5200)
+    }
+  }
+  function openSession() {
+    const desk = SESSION_DESKS.find(x => !crabs.some(c => c.role === 'session' && c.deskX === x))
+    if (desk === undefined) return
+    const c = makeCrab({ acc: ['beanie'], tag: 'docs', tagColor: '#C9B6F2', role: 'session', deskX: desk, x: W - 4, floor: 3, dir: -1, arriving: true })
+    crabs.push(c); sessions.push(c)
+    goTo(c, 2, desk, true); c.arrive = () => { c.arriving = false; say(c, 'hello, new session') }
+  }
+  function closeSession() {
+    const c = sessions.length > 2 ? sessions.pop() : null
+    if (!c) return
+    log(`  session closed: ${c.tag}`); leave(c)
+  }
+  function runSession(c) {
+    if (c.arriving || c.plan.length) return
+    c.sleep = !!c.idle; c.moving = false; if (!c.acc.includes('letter')) c.dir = 1
+    if (c.idle && tick % 50 === 0) say(c, 'z z', 20)
+    if (!c.idle && tick % 80 === c.seed) say(c, pick(['npm test', 'pushing…', 'Read App.tsx', 'Edit index.css']))
+  }
+  function runTeammate(c) {
+    if (c.plan.length) return
+    if (c.goHomeAt && tick > c.goHomeAt) { leave(c); return }
+    if (tick % 90 === c.seed) say(c, pick(['claiming task 3', 'pairing on auth', 'task done!']))
+  }
+
+  const RANK = { main: 0, librarian: 1, agent: 2, teammate: 2, session: 3, decor: 4, leaving: 5 }
+  function unclump() {
+    const standing = crabs.filter(c => !c.plan.length && !c.inLift && !c.awaitLift && !c.fight && c.role !== 'leaving')
+    for (const a of standing) for (const b of standing) {
+      if (a === b || a.floor !== b.floor || Math.abs(a.x - b.x) >= GAP - 2 || b.plan.length) continue
+      if (RANK[a.role] > RANK[b.role] || (RANK[a.role] === RANK[b.role] && a.id > b.id)) continue
+      if (b.role === 'session' && b.x === b.deskX) continue
+      const x = freeSpot(b, b.floor, b.x)
+      if (Math.abs(x - b.x) >= 1) goTo(b, b.floor, x, true)
+    }
+  }
+
+  function frame() {
+    frameNo++
+    if (frameNo % 2 === 0) {
+      tick++
+      if (tick % 5 === 0) unclump()
+      runMain()
+      for (const c of [...crabs]) {
+        if (c.role === 'agent') runAgent(c)
+        else if (c.role === 'session') runSession(c)
+        else if (c.role === 'decor') idle(c)
+        else if (c.role === 'teammate') runTeammate(c)
+      }
+    }
+    for (const c of [...crabs]) move(c)
+    stepLift()
+    draw()
+  }
+  function draw() {
+    drawBuilding(tick); furniture(tick)
+    g.font = 'bold 10px ui-monospace,monospace'
+    for (const r of ROOMS) { g.fillStyle = 'rgba(238,238,238,0.7)'; g.fillText(r.name, (r.x0 + 1.5) * S, (TOP + r.floor * FH + 2.4) * S) }
+    for (const c of crabs) if (!c.inLift) drawCrab(c, tick, floorY(c.floor))
+    for (let i = dust.length - 1; i >= 0; i--) { const d = dust[i]; if (tick > d.until) { dust.splice(i, 1); continue } px(d.x + rnd(-2, 2), d.y + rnd(-2, 1), '#DDD') }
+    for (let i = parts.length - 1; i >= 0; i--) { const p = parts[i]; if (tick > p.until) { parts.splice(i, 1); continue } p.x += p.vx; p.y += p.vy; p.vy += p.kind === 'smoke' ? -0.005 : 0.04; px(p.x, p.y, p.c) }
+    for (let i = bubbles.length - 1; i >= 0; i--) {
+      const b = bubbles[i]
+      if (tick > b.until || !crabs.includes(b.c)) { bubbles.splice(i, 1); continue }
+      const ri = lift.riders.indexOf(b.c)
+      const bx = ri >= 0 ? 6 + ri * 10 - 3 : b.c.x - 3, by = (ri >= 0 ? lift.y : floorY(b.c.floor)) - 10
+      g.font = '11px ui-monospace,monospace'
+      const w = g.measureText(b.text).width + 8, X = Math.max(2, Math.min(bx * S, W * S - w - 2)), Y = by * S
+      g.fillStyle = '#F5EEDC'; g.fillRect(X, Y - 13, w, 15); g.fillRect(Math.max(X + 4, bx * S + 10), Y + 2, 6, 4)
+      g.fillStyle = '#2A211D'; g.fillText(b.text, X + 4, Y - 1)
+    }
+    g.font = '10px ui-monospace,monospace'; g.fillStyle = '#888'
+    g.fillText(`crabs: ${crabs.length}`, (W - 12) * S, (H - 0.5) * S)
+  }
+
+  const table = document.getElementById('table')
+  if (table) {
+    const cats = [...new Set(EVENTS.map(e => e.cat))]
+    table.innerHTML = cats.map(cat => `<div style="margin:8px 0 2px;color:#D97757;font-weight:bold">${cat}</div>` +
+      EVENTS.filter(e => e.cat === cat).map(e => `<div style="display:flex;gap:8px;padding:2px 0;border-bottom:1px solid #2a2a2a"><span style="min-width:150px"><b>${e.name}</b><br><span style="color:#777">${e.how}</span></span><span>${e.act}</span></div>`).join('')).join('')
+    document.getElementById('count').textContent = `Real events → crab actions (${EVENTS.length})`
+  }
+  setInterval(frame, 50)
+})()
+</script>
